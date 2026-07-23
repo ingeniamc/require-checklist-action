@@ -23,3 +23,11 @@ inputs:
     description: A regex pattern of descriptions that will be skipped if matched
     required: false
     default: undefined
+  commitStatusContext:
+    description: >-
+      When set, report the result as a commit status with this context on the
+      pull request head commit instead of failing the job. Requires the
+      statuses:write permission. Useful for issue_comment-triggered workflows,
+      whose runs are not associated with the pull request.
+    required: false
+    default: ""
