@@ -146,32 +146,66 @@ async function action() {
     }
   }
 
+  /** @type string[] */
+  let failures = []
+
   if (incompleteItems.length > 0) {
-    core.setFailed(
+    failures.push(
       "The following items are not marked as completed: " +
       incompleteItems.map((item) => item.text).join(", ")
     );
   }
 
-  if (radioConflictItems.length > 0) {
-    for (let items of radioConflictItems) {
-      core.setFailed(
-        "The following items cannot be marked as completed simultaneously: " +
-        items.map((item) => item.text).join(", ")
-      )
-    }
-    return
+  for (let items of radioConflictItems) {
+    failures.push(
+      "The following items cannot be marked as completed simultaneously: " +
+      items.map((item) => item.text).join(", ")
+    )
   }
 
   const requireChecklist = core.getInput("requireChecklist");
-  if (requireChecklist != "false" && checklistBodies.length == 0) {
-    core.setFailed(
+  if (radioConflictItems.length == 0 && requireChecklist != "false" && checklistBodies.length == 0) {
+    failures.push(
       "No task list was present and requireChecklist is turned on"
     );
-    return;
   }
 
-  console.log("There are no incomplete task list items");
+  // When commitStatusContext is set, report the result as a commit status on
+  // the pull request head instead of failing the job. This keeps the status
+  // current for runs that are not associated with the pull request, such as
+  // issue_comment-triggered workflows.
+  const commitStatusContext = core.getInput("commitStatusContext");
+  if (commitStatusContext && issue.pull_request) {
+    const { data: pull } = await octokit.rest.pulls.get({
+      ...github.context.repo,
+      pull_number: issueNumber,
+    });
+
+    const description = failures.length > 0
+      ? failures.join(", ").substring(0, 140)
+      : "All task list items are completed";
+
+    await octokit.rest.repos.createCommitStatus({
+      ...github.context.repo,
+      sha: pull.head.sha,
+      state: failures.length > 0 ? "failure" : "success",
+      context: commitStatusContext,
+      description,
+      target_url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    });
+
+    for (let failure of failures) {
+      core.warning(failure);
+    }
+  } else {
+    for (let failure of failures) {
+      core.setFailed(failure);
+    }
+  }
+
+  if (failures.length == 0) {
+    console.log("There are no incomplete task list items");
+  }
 }
 
 if (require.main === module) {
