@@ -192,6 +192,23 @@ describe("Require Checklist", () => {
     );
   });
 
+  it("fails for an unchecked inline review comment without a PR checklist", async () => {
+    restoreTest = mockEnv({
+      INPUT_REQUIRECHECKLIST: "false",
+    });
+
+    mockPullRequestBody("No checklist in the PR description");
+    mockIssueComments([]);
+    mockReviewComments(["- [ ] Follow-up task"]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      "The following items are not marked as completed: Follow-up task"
+    );
+  });
+
   it("handles checklist with inapplicable items in body", async () => {
     mockIssueBody("Demo\r\n\r\n- [x] One\r\n- [ ] ~Two~");
     mockIssueComments(["No checklist in comment"]);
