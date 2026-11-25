@@ -35,9 +35,25 @@ describe("Require Checklist", () => {
     );
   }
 
+  const mockPullRequestBody = (body, num = issueNumber) => {
+    fakeApiApp.get(
+      `/repos/YOUR_USERNAME/action-test/issues/${num}`,
+      (_req, res) => res.json({ body, pull_request: {} })
+    );
+  }
+
   const mockIssueComments = (comments, num = issueNumber) => {
     fakeApiApp.get(
       `/repos/YOUR_USERNAME/action-test/issues/${num}/comments`,
+      (_req, res) => res.json(comments.map((c) => {
+        return { body: c };
+      }))
+    );
+  }
+
+  const mockReviewComments = (comments, num = issueNumber) => {
+    fakeApiApp.get(
+      `/repos/YOUR_USERNAME/action-test/pulls/${num}/comments`,
       (_req, res) => res.json(comments.map((c) => {
         return { body: c };
       }))
@@ -149,6 +165,30 @@ describe("Require Checklist", () => {
 
     expect(core.setFailed).toBeCalledWith(
       "The following items are not marked as completed: Two, Three"
+    );
+  });
+
+  it("allows a checked inline review comment to complete a checklist item", async () => {
+    mockPullRequestBody("Demo\r\n\r\n- [ ] Update workflow reference");
+    mockIssueComments([]);
+    mockReviewComments(["- [x] Update workflow reference"]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).not.toHaveBeenCalled();
+  });
+
+  it("fails for an unchecked inline review comment item", async () => {
+    mockPullRequestBody("Demo\r\n\r\n- [x] Existing item");
+    mockIssueComments([]);
+    mockReviewComments(["- [ ] Follow-up task"]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      "The following items are not marked as completed: Follow-up task"
     );
   });
 
