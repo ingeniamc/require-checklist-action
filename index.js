@@ -48,10 +48,13 @@ async function action() {
     }
 
     if (issue.pull_request) {
-      const { data: reviewComments } = await octokit.rest.pulls.listReviewComments({
-        ...github.context.repo,
-        pull_number: issueNumber,
-      });
+      const reviewComments = await octokit.paginate(
+        octokit.rest.pulls.listReviewComments,
+        {
+          ...github.context.repo,
+          pull_number: issueNumber,
+        }
+      );
 
       for (let comment of reviewComments) {
         bodyList.push(comment.body);
