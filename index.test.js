@@ -35,6 +35,13 @@ describe("Require Checklist", () => {
     );
   }
 
+  const mockPullRequestBody = (body, num = issueNumber) => {
+    fakeApiApp.get(
+      `/repos/YOUR_USERNAME/action-test/issues/${num}`,
+      (_req, res) => res.json({ body, pull_request: {} })
+    );
+  }
+
   const mockIssueComments = (comments, num = issueNumber) => {
     fakeApiApp.get(
       `/repos/YOUR_USERNAME/action-test/issues/${num}/comments`,
@@ -42,6 +49,28 @@ describe("Require Checklist", () => {
         return { body: c };
       }))
     );
+  }
+
+  const mockReviewComments = (comments, num = issueNumber) => {
+    fakeApiApp.get(`/repos/YOUR_USERNAME/action-test/pulls/${num}/comments`, (req, res) => {
+      const page = Number(req.query.page || 1);
+      const perPage = Number(req.query.per_page || 30);
+      const start = (page - 1) * perPage;
+
+      if (start + perPage < comments.length) {
+        const nextPageUrl = new URL(
+          `/repos/YOUR_USERNAME/action-test/pulls/${num}/comments`,
+          process.env.GITHUB_API_URL
+        );
+        nextPageUrl.searchParams.set("page", String(page + 1));
+        nextPageUrl.searchParams.set("per_page", String(perPage));
+        res.set("Link", `<${nextPageUrl.href}>; rel="next"`);
+      }
+
+      res.json(comments.slice(start, start + perPage).map((comment) => {
+        return { body: comment };
+      }));
+    });
   }
 
   const mockEvent = (name, mockPayload) => {
@@ -150,6 +179,81 @@ describe("Require Checklist", () => {
     expect(core.setFailed).toBeCalledWith(
       "The following items are not marked as completed: Two, Three"
     );
+  });
+
+  it("allows a checked inline review comment to complete a checklist item", async () => {
+    mockPullRequestBody("Demo\r\n\r\n- [ ] Update workflow reference");
+    mockIssueComments([]);
+    mockReviewComments(["- [x] Update workflow reference"]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).not.toHaveBeenCalled();
+  });
+
+  it("fails for an unchecked inline review comment item", async () => {
+    mockPullRequestBody("Demo\r\n\r\n- [x] Existing item");
+    mockIssueComments([]);
+    mockReviewComments(["- [ ] Follow-up task"]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      "The following items are not marked as completed: Follow-up task"
+    );
+  });
+
+  it("fails for an unchecked inline review comment without a PR checklist", async () => {
+    restoreTest = mockEnv({
+      INPUT_REQUIRECHECKLIST: "false",
+    });
+
+    mockPullRequestBody("No checklist in the PR description");
+    mockIssueComments([]);
+    mockReviewComments(["- [ ] Follow-up task"]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      "The following items are not marked as completed: Follow-up task"
+    );
+  });
+
+  it("fails for an unchecked inline review comment on a later page", async () => {
+    restoreTest = mockEnv({
+      INPUT_REQUIRECHECKLIST: "false",
+    });
+
+    mockPullRequestBody("No checklist in the PR description");
+    mockIssueComments([]);
+    mockReviewComments([
+      ...Array.from({ length: 30 }, (_, index) => `- [x] Existing task ${index + 1}`),
+      "- [ ] Follow-up task",
+    ]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      "The following items are not marked as completed: Follow-up task"
+    );
+  });
+
+  it("uses a checked inline review comment on a later page to complete a matching PR checklist item", async () => {
+    mockPullRequestBody("Demo\r\n\r\n- [ ] Update workflow reference");
+    mockIssueComments([]);
+    mockReviewComments([
+      ...Array.from({ length: 30 }, (_, index) => `- [x] Existing task ${index + 1}`),
+      "- [x] Update workflow reference",
+    ]);
+
+    core.setFailed = jest.fn();
+    await action(tools);
+
+    expect(core.setFailed).not.toHaveBeenCalled();
   });
 
   it("handles checklist with inapplicable items in body", async () => {

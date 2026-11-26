@@ -10,6 +10,7 @@ const RADIO_TAG_ITEM = /<!-- TaskRadio (?<radioTag>\S+) -->/g
 
 async function action() {
   const bodyList = [];
+  const inlineReviewCommentBodies = new Set();
 
   const token = core.getInput("token");
   const octokit = github.getOctokit(token);
@@ -45,6 +46,21 @@ async function action() {
     for (let comment of comments) {
       bodyList.push(comment.body);
     }
+
+    if (issue.pull_request) {
+      const reviewComments = await octokit.paginate(
+        octokit.rest.pulls.listReviewComments,
+        {
+          ...github.context.repo,
+          pull_number: issueNumber,
+        }
+      );
+
+      for (let comment of reviewComments) {
+        bodyList.push(comment.body);
+        inlineReviewCommentBodies.add(comment.body);
+      }
+    }
   }
 
   /**
@@ -56,6 +72,7 @@ async function action() {
 
   /** @type ChecklistItem[][] */
   let checklistBodies = []
+  const completedInlineReviewItems = new Set();
 
   // Collect check list items
   for (let body of bodyList) {
@@ -95,12 +112,6 @@ async function action() {
             continue;
           }
 
-          if (is_complete) {
-            console.log("Completed task list item: " + item.text);
-          } else {
-            console.log("Incomplete task list item: " + item.text);
-          }
-
           checklistItems.push({
             text: item.text,
             radioGroups: [...item.text.matchAll(RADIO_TAG_ITEM)].map((radioMatch) => radioMatch.groups && radioMatch.groups.radioTag || "").filter((tag) => tag),
@@ -111,6 +122,12 @@ async function action() {
     }
 
     if (checklistItems.length > 0) checklistBodies.push(checklistItems)
+
+    if (inlineReviewCommentBodies.has(body)) {
+      for (let item of checklistItems) {
+        if (item.isComplete) completedInlineReviewItems.add(item.text);
+      }
+    }
   }
 
   /**
@@ -127,6 +144,14 @@ async function action() {
     let radioGroupedItems = {}
 
     for (let item of items) {
+      if (completedInlineReviewItems.has(item.text)) item.isComplete = true;
+
+      if (item.isComplete) {
+        console.log("Completed task list item: " + item.text);
+      } else {
+        console.log("Incomplete task list item: " + item.text);
+      }
+
       if (item.radioGroups.length == 0 && !item.isComplete) {
         incompleteItems.push(item)
         continue
@@ -172,8 +197,7 @@ async function action() {
 
   // When commitStatusContext is set, report the result as a commit status on
   // the pull request head instead of failing the job. This keeps the status
-  // current for runs that are not associated with the pull request, such as
-  // issue_comment-triggered workflows.
+  // current for comment-triggered runs that are not associated with the PR.
   const commitStatusContext = core.getInput("commitStatusContext");
   if (commitStatusContext && issue.pull_request) {
     const { data: pull } = await octokit.rest.pulls.get({
